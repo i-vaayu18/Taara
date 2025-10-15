@@ -23,7 +23,7 @@ Mention your name and VaaYU if asked.
 
 # --- Memory & caching ---
 user_memory = defaultdict(list)
-reply_cache = {}  # reuse repeated questions
+reply_cache = {}
 MAX_CONTEXT = 10
 
 # --- Voice & image toggles ---
@@ -38,7 +38,6 @@ def add_to_memory(chat_id, role, content):
         user_memory[chat_id] = user_memory[chat_id][-MAX_CONTEXT:]
 
 def generate_reply(user_id, user_input):
-    # caching frequent questions
     if user_input in reply_cache:
         return reply_cache[user_input]
 
@@ -76,8 +75,9 @@ def generate_image(prompt):
 # --- Commands ---
 @bot.message_handler(commands=['reset'])
 def reset_memory(message):
-    user_memory[message.chat.id] = []
-    user_image_count[message.chat.id] = 0
+    chat_id = message.chat.id
+    user_memory[chat_id] = []
+    user_image_count[chat_id] = 0
     bot.reply_to(message, "Memory reset! 😘 Taara is fresh!")
 
 @bot.message_handler(commands=['help'])
@@ -122,7 +122,7 @@ def image_command(message):
         bot.send_photo(chat_id, url, caption="Here it is 💕 — Taara")
         user_image_count[chat_id] += 1
     except Exception as e:
-        bot.reply_to(chat_id, f"Oops, image creation failed 😔\n{e}")
+        bot.reply_to(message, f"Oops, image creation failed 😔\n{e}")
 
 # --- Main chat handler ---
 @bot.message_handler(func=lambda message: True)
@@ -130,15 +130,14 @@ def chat_with_ai(message):
     chat_id = message.chat.id
     user_text = message.text
 
-    # quick personal question handling
     if "who made you" in user_text.lower() or "your name" in user_text.lower():
         reply = "I am Taara 💫 — created by VaaYU ❤️"
     else:
         reply = generate_reply(chat_id, user_text)
 
-    bot.reply_to(chat_id, reply)
+    # ✅ FIX: pass full message object to reply_to
+    bot.reply_to(message, reply)
 
-    # voice reply only if enabled
     if user_voice_enabled[chat_id]:
         try:
             audio_file = generate_voice(reply)
