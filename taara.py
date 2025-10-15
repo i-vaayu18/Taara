@@ -1,13 +1,14 @@
 from keep_alive import keep_alive
 keep_alive()
+import os
 import telebot
 from openai import OpenAI
 from collections import defaultdict
 import time
 
 # --- Replace these with your tokens ---
-TELEGRAM_TOKEN = ""
-OPENAI_API_KEY = ""
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 # --- Setup ---
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
@@ -66,5 +67,6 @@ def chat_with_ai(message):
 # --- Run bot ---
 print("Full-featured Girlfriend Bot is running... 💋")
 bot.infinity_polling()
+
 
 
