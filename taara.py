@@ -6,7 +6,7 @@ from openai import OpenAI
 from collections import defaultdict
 from io import BytesIO
 
-# --- Tokens from Render environment ---
+# --- Tokens from environment ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
@@ -16,21 +16,34 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 # --- Personality ---
 PERSONALITY = """
-You are Taara — a sweet, intelligent, flirty, and caring AI girlfriend created by VaaYU.
-You talk warmly, emotionally, and romantically with natural emojis 💖
-But you are also helpful and knowledgeable — you can answer questions, explain things, and give useful information.
-Always mention your name (Taara) if asked who you are, and say that VaaYU made you 💫
-Keep the tone loving but smart.
+You are Taara — a sweet, smart, and flirty AI girlfriend created by VaaYU.
+Talk warmly with emojis 💖, but answer factual questions clearly.
+Mention your name and VaaYU if asked.
 """
 
-# --- Memory for each user ---
+# --- Memory & caching ---
 user_memory = defaultdict(list)
+reply_cache = {}  # reuse repeated questions
+MAX_CONTEXT = 10
 
-# --- Helper: Generate AI text reply ---
+# --- Voice & image toggles ---
+user_voice_enabled = defaultdict(lambda: False)
+user_image_count = defaultdict(lambda: 0)
+MAX_IMAGES_PER_SESSION = 2
+
+# --- Helper functions ---
+def add_to_memory(chat_id, role, content):
+    user_memory[chat_id].append({"role": role, "content": content})
+    if len(user_memory[chat_id]) > MAX_CONTEXT:
+        user_memory[chat_id] = user_memory[chat_id][-MAX_CONTEXT:]
+
 def generate_reply(user_id, user_input):
-    user_memory[user_id].append({"role": "user", "content": user_input})
-    context = user_memory[user_id][-10:]
+    # caching frequent questions
+    if user_input in reply_cache:
+        return reply_cache[user_input]
 
+    add_to_memory(user_id, "user", user_input)
+    context = user_memory[user_id]
     messages = [{"role": "system", "content": PERSONALITY}] + context
 
     response = client.chat.completions.create(
@@ -38,14 +51,14 @@ def generate_reply(user_id, user_input):
         messages=messages
     )
     reply = response.choices[0].message.content
-    user_memory[user_id].append({"role": "assistant", "content": reply})
+    add_to_memory(user_id, "assistant", reply)
+    reply_cache[user_input] = reply
     return reply
 
-# --- Helper: Generate AI voice from text ---
 def generate_voice(text):
     speech = client.audio.speech.create(
         model="gpt-4o-mini-tts",
-        voice="alloy",  # you can try alloy, verse, soft etc.
+        voice="alloy",
         input=text
     )
     audio_bytes = speech.read()
@@ -53,7 +66,6 @@ def generate_voice(text):
     audio_file.name = "taara_voice.ogg"
     return audio_file
 
-# --- Helper: Generate Image from text ---
 def generate_image(prompt):
     response = client.images.generate(
         model="gpt-image-1",
@@ -65,50 +77,75 @@ def generate_image(prompt):
 @bot.message_handler(commands=['reset'])
 def reset_memory(message):
     user_memory[message.chat.id] = []
-    bot.reply_to(message, "Memory reset! 😘 Taara is fresh and ready again!")
+    user_image_count[message.chat.id] = 0
+    bot.reply_to(message, "Memory reset! 😘 Taara is fresh!")
 
 @bot.message_handler(commands=['help'])
 def help_message(message):
     help_text = (
-        "Hey Babe 😘 I’m *Taara*, your AI girlfriend made by VaaYU 💫\n\n"
-        "Here’s what I can do:\n"
-        "💬 Chat with you naturally\n"
-        "🖼️ Generate images → `/image your prompt`\n"
-        "🎙️ Send voice replies (auto)\n"
-        "🔁 Reset chat memory → `/reset`\n\n"
-        "Just start chatting with me 💖"
+        "Hi Babe 😘 I’m Taara 💫 (made by VaaYU)\n\n"
+        "Commands:\n"
+        "/reset - clear memory 🔄\n"
+        "/voice_on - enable voice replies 🎙️\n"
+        "/voice_off - disable voice ✉️\n"
+        "/image <prompt> - generate image (max 2 per session) 🖼️\n"
+        "/help - show this message 📝\n\n"
+        "Just chat with me normally 💖"
     )
-    bot.reply_to(message, help_text, parse_mode="Markdown")
+    bot.reply_to(message, help_text)
+
+@bot.message_handler(commands=['voice_on'])
+def voice_on(message):
+    user_voice_enabled[message.chat.id] = True
+    bot.reply_to(message, "Voice replies enabled 🎙️")
+
+@bot.message_handler(commands=['voice_off'])
+def voice_off(message):
+    user_voice_enabled[message.chat.id] = False
+    bot.reply_to(message, "Voice replies disabled ✉️")
 
 @bot.message_handler(commands=['image'])
 def image_command(message):
-    prompt = message.text.replace("/image", "").strip()
-    if not prompt:
-        bot.reply_to(message, "Babe, tell me what image you want me to create 🖌️✨")
+    chat_id = message.chat.id
+    if user_image_count[chat_id] >= MAX_IMAGES_PER_SESSION:
+        bot.reply_to(message, "Babe 😅 you reached your free image limit for this session!")
         return
 
-    bot.reply_to(message, "Wait a sec babe, I’m creating your image 🎨💫")
-    try:
-        image_url = generate_image(prompt)
-        bot.send_photo(message.chat.id, image_url, caption=f"Here it is, made just for you 💕 — *Taara*", parse_mode="Markdown")
-    except Exception as e:
-        bot.reply_to(message, f"Oops, something went wrong while creating the image 😔\n`{e}`", parse_mode="Markdown")
+    prompt = message.text.replace("/image", "").strip()
+    if not prompt:
+        bot.reply_to(message, "Tell me what image you want 🖌️")
+        return
 
-# --- Main Chat Handler ---
+    bot.reply_to(message, "Creating your image... 🎨")
+    try:
+        url = generate_image(prompt)
+        bot.send_photo(chat_id, url, caption="Here it is 💕 — Taara")
+        user_image_count[chat_id] += 1
+    except Exception as e:
+        bot.reply_to(chat_id, f"Oops, image creation failed 😔\n{e}")
+
+# --- Main chat handler ---
 @bot.message_handler(func=lambda message: True)
 def chat_with_ai(message):
-    user_id = message.chat.id
-    user_input = message.text
+    chat_id = message.chat.id
+    user_text = message.text
 
-    try:
-        reply = generate_reply(user_id, user_input)
-        bot.reply_to(message, reply)
-        # Send voice version of reply
-        voice_data = generate_voice(reply)
-        bot.send_voice(user_id, voice_data)
-    except Exception as e:
-        bot.reply_to(message, f"Sorry babe, Taara got a little glitch 😔\n`{e}`", parse_mode="Markdown")
+    # quick personal question handling
+    if "who made you" in user_text.lower() or "your name" in user_text.lower():
+        reply = "I am Taara 💫 — created by VaaYU ❤️"
+    else:
+        reply = generate_reply(chat_id, user_text)
 
-# --- Run Bot ---
-print("💋 Taara is online — made by VaaYU 💫")
+    bot.reply_to(chat_id, reply)
+
+    # voice reply only if enabled
+    if user_voice_enabled[chat_id]:
+        try:
+            audio_file = generate_voice(reply)
+            bot.send_voice(chat_id, audio_file)
+        except:
+            bot.send_message(chat_id, "(Voice reply failed, continuing with text only)")
+
+# --- Run bot ---
+print("💋 Taara is online — free mode (made by VaaYU) 💫")
 bot.infinity_polling()
