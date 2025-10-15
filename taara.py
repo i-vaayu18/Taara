@@ -1,3 +1,5 @@
+from keep_alive import keep_alive
+keep_alive()
 import telebot
 from openai import OpenAI
 from collections import defaultdict
@@ -64,3 +66,4 @@ def chat_with_ai(message):
 # --- Run bot ---
 print("Full-featured Girlfriend Bot is running... 💋")
 bot.infinity_polling()
+
