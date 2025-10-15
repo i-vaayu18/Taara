@@ -6,8 +6,8 @@ from collections import defaultdict
 import time
 
 # --- Replace these with your tokens ---
-TELEGRAM_TOKEN = "8423756303:AAHovMk-Up7BDbtHl_-XpQjddRxHhaHeJ9o"
-OPENAI_API_KEY = "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"
+TELEGRAM_TOKEN = ""
+OPENAI_API_KEY = ""
 
 # --- Setup ---
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
@@ -66,4 +66,5 @@ def chat_with_ai(message):
 # --- Run bot ---
 print("Full-featured Girlfriend Bot is running... 💋")
 bot.infinity_polling()
+
 
