@@ -5,6 +5,7 @@ import telebot
 from openai import OpenAI
 from collections import defaultdict
 from io import BytesIO
+from flask import Flask, request
 
 # --- Tokens from environment ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -30,6 +31,19 @@ MAX_CONTEXT = 10
 user_voice_enabled = defaultdict(lambda: False)
 user_image_count = defaultdict(lambda: 0)
 MAX_IMAGES_PER_SESSION = 2
+
+# --- Flask app ---
+app = Flask(__name__)
+
+@app.route("/", methods=["POST"])
+def webhook():
+    update = telebot.types.Update.de_json(request.stream.read().decode("utf-8"))
+    bot.process_new_updates([update])
+    return "OK", 200
+
+@app.route("/ping")
+def ping():
+    return "Taara is alive! 💖", 200
 
 # --- Helper functions ---
 def add_to_memory(chat_id, role, content):
@@ -135,7 +149,6 @@ def chat_with_ai(message):
     else:
         reply = generate_reply(chat_id, user_text)
 
-    # ✅ FIX: pass full message object to reply_to
     bot.reply_to(message, reply)
 
     if user_voice_enabled[chat_id]:
@@ -145,6 +158,11 @@ def chat_with_ai(message):
         except:
             bot.send_message(chat_id, "(Voice reply failed, continuing with text only)")
 
-# --- Run bot ---
-print("💋 Taara is online — free mode (made by VaaYU) 💫")
-bot.infinity_polling()
+# --- Set webhook for Telegram ---
+bot.remove_webhook()
+bot.set_webhook(url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/")  # Render public URL
+
+# --- Run Flask server ---
+if __name__ == "__main__":
+    print("💋 Taara is online — free mode (made by VaaYU) 💫")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
