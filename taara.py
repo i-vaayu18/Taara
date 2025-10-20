@@ -34,9 +34,11 @@ MAX_IMAGES_PER_SESSION = 2
 
 # --- Key-based access control with persistence ---
 AUTHORIZED_USERS_FILE = "authorized_users.txt"
+USED_KEYS_FILE = "used_keys.txt"
 AUTHORIZED_USERS = set()
+USED_KEYS = {}  # key: chat_id
 
-# Load authorized users from file on startup
+# Load authorized users
 if os.path.exists(AUTHORIZED_USERS_FILE):
     with open(AUTHORIZED_USERS_FILE, "r") as f:
         for line in f:
@@ -44,7 +46,14 @@ if os.path.exists(AUTHORIZED_USERS_FILE):
             if line.isdigit():
                 AUTHORIZED_USERS.add(int(line))
 
-# Load valid keys from keys.txt
+# Load used keys
+if os.path.exists(USED_KEYS_FILE):
+    with open(USED_KEYS_FILE, "r") as f:
+        for line in f:
+            key, uid = line.strip().split(":")
+            USED_KEYS[key] = int(uid)
+
+# Load valid keys
 try:
     with open("keys.txt", "r") as f:
         VALID_KEYS = [line.strip() for line in f if line.strip()]
@@ -53,7 +62,7 @@ except FileNotFoundError:
     print("⚠️ keys.txt not found! Please create the file with valid keys, one per line.")
 
 # --- Admin user IDs (only these IDs can use /revoke) ---
-ADMIN_IDS = {5084575526}  # <-- Replace with your Telegram chat ID
+ADMIN_IDS = {123456789}  # <-- Replace with your Telegram chat ID
 
 # --- Flask app ---
 app = Flask(__name__)
@@ -109,11 +118,16 @@ def generate_image(prompt):
     )
     return response.data[0].url
 
-# --- Save authorized users to file ---
+# --- Save files ---
 def save_authorized_users():
     with open(AUTHORIZED_USERS_FILE, "w") as f:
         for user_id in AUTHORIZED_USERS:
             f.write(f"{user_id}\n")
+
+def save_used_keys():
+    with open(USED_KEYS_FILE, "w") as f:
+        for key, uid in USED_KEYS.items():
+            f.write(f"{key}:{uid}\n")
 
 # --- Commands ---
 @bot.message_handler(commands=['register'])
@@ -125,17 +139,23 @@ def register_user(message):
         return
 
     key = parts[1].strip()
-    if key in VALID_KEYS:
-        AUTHORIZED_USERS.add(chat_id)
-        save_authorized_users()  # save immediately
-        bot.reply_to(message, "Access granted. Welcome!")
-    else:
-        bot.reply_to(message, "Access denied — contact admin for key.")
+    if key not in VALID_KEYS:
+        bot.reply_to(message, "Invalid key! Contact admin.")
+        return
+
+    if key in USED_KEYS:
+        bot.reply_to(message, "This key has already been used by another user.")
+        return
+
+    AUTHORIZED_USERS.add(chat_id)
+    USED_KEYS[key] = chat_id
+    save_authorized_users()
+    save_used_keys()
+    bot.reply_to(message, "Access granted. Welcome!")
 
 @bot.message_handler(commands=['revoke'])
 def revoke_user(message):
     chat_id = message.chat.id
-    # check if sender is admin
     if chat_id not in ADMIN_IDS:
         bot.reply_to(message, "You are not authorized to use this command.")
         return
@@ -153,28 +173,36 @@ def revoke_user(message):
 
     if target_id in AUTHORIZED_USERS:
         AUTHORIZED_USERS.remove(target_id)
-        # update file
+        # free the key
+        for k, uid in list(USED_KEYS.items()):
+            if uid == target_id:
+                del USED_KEYS[k]
         save_authorized_users()
+        save_used_keys()
         bot.reply_to(message, f"User {target_id} access revoked ✅")
     else:
         bot.reply_to(message, f"User {target_id} is not authorized or already revoked.")
 
+# --- Protected commands ---
+def check_authorized(func):
+    def wrapper(message, *args, **kwargs):
+        if message.chat.id not in AUTHORIZED_USERS:
+            bot.reply_to(message, "Access denied — contact admin for key.\nRegister with /register <KEY>")
+            return
+        return func(message, *args, **kwargs)
+    return wrapper
+
 @bot.message_handler(commands=['reset'])
+@check_authorized
 def reset_memory(message):
     chat_id = message.chat.id
-    if chat_id not in AUTHORIZED_USERS:
-        bot.reply_to(message, "Access denied — contact admin for key.")
-        return
     user_memory[chat_id] = []
     user_image_count[chat_id] = 0
     bot.reply_to(message, "Memory reset! 😘 Taara is fresh!")
 
 @bot.message_handler(commands=['help'])
+@check_authorized
 def help_message(message):
-    chat_id = message.chat.id
-    if chat_id not in AUTHORIZED_USERS:
-        bot.reply_to(message, "Access denied — contact admin for key.")
-        return
     help_text = (
         "Hi Babe 😘 I’m Taara 💫 (made by VaaYU)\n\n"
         "Commands:\n"
@@ -184,35 +212,27 @@ def help_message(message):
         "/image <prompt> - generate image (max 2 per session) 🖼️\n"
         "/help - show this message 📝\n"
         "/register <KEY> - register your key 🔑\n"
-        "/revoke <USER_CHAT_ID> - admin only command 🚨\n\n"
+        "/revoke <USER_CHAT_ID> - admin only 🚨\n\n"
         "Just chat with me normally 💖"
     )
     bot.reply_to(message, help_text)
 
 @bot.message_handler(commands=['voice_on'])
+@check_authorized
 def voice_on(message):
-    chat_id = message.chat.id
-    if chat_id not in AUTHORIZED_USERS:
-        bot.reply_to(message, "Access denied — contact admin for key.")
-        return
-    user_voice_enabled[chat_id] = True
+    user_voice_enabled[message.chat.id] = True
     bot.reply_to(message, "Voice replies enabled 🎙️")
 
 @bot.message_handler(commands=['voice_off'])
+@check_authorized
 def voice_off(message):
-    chat_id = message.chat.id
-    if chat_id not in AUTHORIZED_USERS:
-        bot.reply_to(message, "Access denied — contact admin for key.")
-        return
-    user_voice_enabled[chat_id] = False
+    user_voice_enabled[message.chat.id] = False
     bot.reply_to(message, "Voice replies disabled ✉️")
 
 @bot.message_handler(commands=['image'])
+@check_authorized
 def image_command(message):
     chat_id = message.chat.id
-    if chat_id not in AUTHORIZED_USERS:
-        bot.reply_to(message, "Access denied — contact admin for key.")
-        return
     if user_image_count[chat_id] >= MAX_IMAGES_PER_SESSION:
         bot.reply_to(message, "Babe 😅 you reached your free image limit for this session!")
         return
@@ -232,10 +252,10 @@ def image_command(message):
 @bot.message_handler(func=lambda message: True)
 def chat_with_ai(message):
     chat_id = message.chat.id
-    user_text = message.text
     if chat_id not in AUTHORIZED_USERS:
-        bot.reply_to(message, "Access denied — contact admin for key.")
+        bot.reply_to(message, "Access denied — contact admin for key.\nRegister with /register <KEY>")
         return
+    user_text = message.text
     if "who made you" in user_text.lower() or "your name" in user_text.lower():
         reply = "I am Taara 💫 — created by VaaYU ❤️"
     else:
