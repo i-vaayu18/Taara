@@ -313,6 +313,30 @@ def image_command(message):
     except Exception as e:
         bot.reply_to(message, f"Oops, image creation failed 😔\n{e}")
 
+# --- Admin: Create key manually ---
+@bot.message_handler(commands=['createkey'])
+def create_key(message):
+    if message.chat.id not in ADMIN_IDS:
+        bot.reply_to(message, "You are not authorized to use this command.")
+        return
+
+    parts = message.text.strip().split()
+    if len(parts) < 2:
+        bot.reply_to(message, "Usage: /createkey <NEW-KEY>")
+        return
+
+    new_key = parts[1].strip()
+    if new_key in VALID_KEYS:
+        bot.reply_to(message, f"This key already exists ❌")
+        return
+
+    # Add to keys list & save
+    VALID_KEYS.append(new_key)
+    with open("keys.txt", "a") as f:
+        f.write(f"{new_key}\n")
+
+    bot.reply_to(message, f"✅ New key created: {new_key}")
+
 # --- Main chat handler ---
 @bot.message_handler(func=lambda message: True)
 def chat_with_ai(message):
@@ -348,4 +372,5 @@ bot.set_webhook(url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/")
 if __name__ == "__main__":
     print("💋 Taara is online — key-protected + admin mode 💫")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
 
