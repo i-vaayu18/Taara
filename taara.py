@@ -62,8 +62,8 @@ except FileNotFoundError:
     print("⚠️ keys.txt not found! Please create the file with valid keys, one per line.")
 
 # --- Admin user IDs (only these IDs can use /revoke) ---
-ADMIN_IDS = {123456789}  # <-- Replace with your Telegram chat ID
-AUTHORIZED_USERS.update(ADMIN_IDS) # <-- Admin auto-authorized during startup
+ADMIN_IDS = {5084575526}  # <-- Replace with your Telegram chat ID
+AUTHORIZED_USERS.update(ADMIN_IDS)  # Admin auto-authorized
 
 # --- Flask app ---
 app = Flask(__name__)
@@ -134,6 +134,10 @@ def save_used_keys():
 @bot.message_handler(commands=['register'])
 def register_user(message):
     chat_id = message.chat.id
+    if chat_id in ADMIN_IDS:
+        bot.reply_to(message, "You are admin ✅ — no key needed.")
+        return
+
     parts = message.text.strip().split()
     if len(parts) < 2:
         bot.reply_to(message, "Usage: /register <YOUR-KEY>")
@@ -188,6 +192,8 @@ def revoke_user(message):
 def check_authorized(func):
     def wrapper(message, *args, **kwargs):
         if message.chat.id not in AUTHORIZED_USERS:
+            if message.chat.id in ADMIN_IDS:
+                return func(message, *args, **kwargs)  # Admin bypass
             bot.reply_to(message, "Access denied — contact admin for key.\nRegister with /register <KEY>")
             return
         return func(message, *args, **kwargs)
@@ -253,15 +259,21 @@ def image_command(message):
 @bot.message_handler(func=lambda message: True)
 def chat_with_ai(message):
     chat_id = message.chat.id
-    if chat_id not in AUTHORIZED_USERS:
+
+    # Admin bypass + authorized users
+    if chat_id not in AUTHORIZED_USERS and chat_id not in ADMIN_IDS:
         bot.reply_to(message, "Access denied — contact admin for key.\nRegister with /register <KEY>")
         return
+
     user_text = message.text
+
     if "who made you" in user_text.lower() or "your name" in user_text.lower():
         reply = "I am Taara 💫 — created by VaaYU ❤️"
     else:
         reply = generate_reply(chat_id, user_text)
+
     bot.reply_to(message, reply)
+
     if user_voice_enabled[chat_id]:
         try:
             audio_file = generate_voice(reply)
@@ -277,4 +289,3 @@ bot.set_webhook(url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/")  #
 if __name__ == "__main__":
     print("💋 Taara is online — key-protected + admin mode 💫")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
