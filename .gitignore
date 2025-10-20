@@ -1,0 +1,24 @@
+# --- Keys & sensitive data ---
+keys.txt
+used_keys.txt
+revoked_keys.txt
+authorized_users.txt
+
+# --- Python artifacts ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- Environment files ---
+.env
+
+# --- OS specific ---
+.DS_Store
+Thumbs.db
+
+# --- Logs ---
+*.log
+
+# --- Other sensitive files ---
+*.sqlite3
