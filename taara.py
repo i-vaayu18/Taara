@@ -166,7 +166,7 @@ def check_authorized(func):
 def cmd_start(message):
     chat_id = message.chat.id
     if chat_id in ADMIN_IDS:
-        bot.reply_to(message, f"Hi {CREATOR_NAME} ❤️ —  How can I help today?")
+        bot.reply_to(message, f"Hi {CREATOR_NAME} ❤️ — How can I help today?")
         return
     if chat_id in AUTHORIZED_USERS:
         bot.reply_to(message, "Hi Babe 😘 — you are already registered. Just chat with me!")
@@ -182,7 +182,6 @@ def register_user(message):
         bot.reply_to(message, f"You are the admin ({CREATOR_NAME}) — no key needed.")
         return
 
-    # Check if user already authorized
     if chat_id in AUTHORIZED_USERS:
         bot.reply_to(message, "You are already registered! 😘")
         return
@@ -214,25 +213,65 @@ def create_key(message):
     if message.chat.id not in ADMIN_IDS:
         bot.reply_to(message, "You are not authorized to use this command.")
         return
-
     parts = message.text.strip().split()
     if len(parts) < 2:
         bot.reply_to(message, "Usage: /createkey <NEW-KEY>")
         return
-
     new_key = parts[1].strip()
     if new_key in VALID_KEYS:
         bot.reply_to(message, f"This key already exists ❌")
         return
-
-    # Add to keys list & save
     VALID_KEYS.append(new_key)
     with open("keys.txt", "a") as f:
         f.write(f"{new_key}\n")
-
     bot.reply_to(message, f"✅ New key created: {new_key}")
 
-# --- Commands list ---
+@bot.message_handler(commands=['revoke'])
+def revoke_user(message):
+    chat_id = message.chat.id
+    if chat_id not in ADMIN_IDS:
+        bot.reply_to(message, "You are not authorized to use this command.")
+        return
+    parts = message.text.strip().split()
+    if len(parts) < 2:
+        bot.reply_to(message, "Usage: /revoke <USER_CHAT_ID> [KEY]")
+        return
+    uid = int(parts[1])
+    if uid in AUTHORIZED_USERS:
+        AUTHORIZED_USERS.remove(uid)
+    # optional key revoke
+    if len(parts) == 3:
+        key = parts[2]
+        REVOKED_KEYS.add(key)
+        save_revoked_keys()
+    save_authorized_users()
+    bot.reply_to(message, f"User {uid} revoked successfully! ❌")
+
+@bot.message_handler(commands=['list_users'])
+def list_users(message):
+    chat_id = message.chat.id
+    if chat_id not in ADMIN_IDS:
+        bot.reply_to(message, "You are not authorized to use this command.")
+        return
+
+    text = "💌 Full User Report:\n\n"
+
+    text += "👑 Admins:\n"
+    for aid in ADMIN_IDS:
+        text += f"- {aid}\n"
+
+    text += "\n🙋 Authorized Users:\n"
+    for uid in AUTHORIZED_USERS:
+        if uid not in ADMIN_IDS:
+            keys_used = [k for k, v in USED_KEYS.items() if v == uid]
+            keys_str = ", ".join(keys_used) if keys_used else "No key recorded"
+            text += f"- {uid} (Keys: {keys_str})\n"
+
+    text += "\n❌ Revoked Keys:\n"
+    text += ", ".join(REVOKED_KEYS) if REVOKED_KEYS else "None"
+
+    bot.reply_to(message, text)
+
 @bot.message_handler(commands=['commands'])
 @check_authorized
 def show_commands(message):
@@ -250,7 +289,6 @@ def show_commands(message):
     )
     bot.reply_to(message, cmds)
 
-# --- Reset / voice / image handlers ---
 @bot.message_handler(commands=['reset'])
 @check_authorized
 def reset_memory(message):
