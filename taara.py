@@ -63,6 +63,7 @@ except FileNotFoundError:
 
 # --- Admin user IDs (only these IDs can use /revoke) ---
 ADMIN_IDS = {123456789}  # <-- Replace with your Telegram chat ID
+AUTHORIZED_USERS.update(ADMIN_IDS) # <-- Admin auto-authorized during startup
 
 # --- Flask app ---
 app = Flask(__name__)
@@ -276,3 +277,4 @@ bot.set_webhook(url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/")  #
 if __name__ == "__main__":
     print("💋 Taara is online — key-protected + admin mode 💫")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
