@@ -182,6 +182,11 @@ def register_user(message):
         bot.reply_to(message, f"You are the admin ({CREATOR_NAME}) — no key needed.")
         return
 
+    # Check if user already authorized
+    if chat_id in AUTHORIZED_USERS:
+        bot.reply_to(message, "You are already registered! 😘")
+        return
+
     parts = message.text.strip().split()
     if len(parts) < 2:
         bot.reply_to(message, "Usage: /register <YOUR-KEY>")
@@ -204,57 +209,28 @@ def register_user(message):
     save_used_keys()
     bot.reply_to(message, "Access granted. Welcome!")
 
-@bot.message_handler(commands=['revoke'])
-def revoke_user(message):
-    chat_id = message.chat.id
-    if chat_id not in ADMIN_IDS:
+@bot.message_handler(commands=['createkey'])
+def create_key(message):
+    if message.chat.id not in ADMIN_IDS:
         bot.reply_to(message, "You are not authorized to use this command.")
         return
 
     parts = message.text.strip().split()
     if len(parts) < 2:
-        bot.reply_to(message, "Usage: /revoke <USER_CHAT_ID> [optional-key-to-revoke]")
+        bot.reply_to(message, "Usage: /createkey <NEW-KEY>")
         return
 
-    try:
-        target_id = int(parts[1].strip())
-    except ValueError:
-        bot.reply_to(message, "Invalid chat_id. Must be a number.")
+    new_key = parts[1].strip()
+    if new_key in VALID_KEYS:
+        bot.reply_to(message, f"This key already exists ❌")
         return
 
-    key_to_revoke = parts[2].strip() if len(parts) >= 3 else None
-    removed_keys = []
+    # Add to keys list & save
+    VALID_KEYS.append(new_key)
+    with open("keys.txt", "a") as f:
+        f.write(f"{new_key}\n")
 
-    if target_id in AUTHORIZED_USERS:
-        AUTHORIZED_USERS.remove(target_id)
-        for k, uid in list(USED_KEYS.items()):
-            if uid == target_id:
-                removed_keys.append(k)
-                del USED_KEYS[k]
-
-    if key_to_revoke:
-        if key_to_revoke in USED_KEYS and USED_KEYS[key_to_revoke] == target_id:
-            del USED_KEYS[key_to_revoke]
-        removed_keys.append(key_to_revoke)
-
-    for rk in removed_keys:
-        if rk:
-            REVOKED_KEYS.add(rk)
-
-    save_authorized_users()
-    save_used_keys()
-    save_revoked_keys()
-
-    bot.reply_to(message, f"User {target_id} access revoked ✅ Keys revoked: {', '.join(removed_keys) if removed_keys else 'none specified.'}")
-
-# --- List users (admin only) ---
-@bot.message_handler(commands=['list_users'])
-def list_users(message):
-    if message.chat.id not in ADMIN_IDS:
-        bot.reply_to(message, "Only admin can use this command.")
-        return
-    text = "Authorized Users:\n" + "\n".join(str(uid) for uid in AUTHORIZED_USERS if uid not in ADMIN_IDS)
-    bot.reply_to(message, text or "No other authorized users.")
+    bot.reply_to(message, f"✅ New key created: {new_key}")
 
 # --- Commands list ---
 @bot.message_handler(commands=['commands'])
@@ -269,6 +245,7 @@ def show_commands(message):
         "/image <prompt> - generate image 🖼️\n"
         "/revoke <USER_CHAT_ID> [key] - admin only 🚨\n"
         "/list_users - admin only 👥\n"
+        "/createkey <KEY> - admin only 🔑\n"
         "/commands - show this list 📝"
     )
     bot.reply_to(message, cmds)
@@ -313,30 +290,6 @@ def image_command(message):
     except Exception as e:
         bot.reply_to(message, f"Oops, image creation failed 😔\n{e}")
 
-# --- Admin: Create key manually ---
-@bot.message_handler(commands=['createkey'])
-def create_key(message):
-    if message.chat.id not in ADMIN_IDS:
-        bot.reply_to(message, "You are not authorized to use this command.")
-        return
-
-    parts = message.text.strip().split()
-    if len(parts) < 2:
-        bot.reply_to(message, "Usage: /createkey <NEW-KEY>")
-        return
-
-    new_key = parts[1].strip()
-    if new_key in VALID_KEYS:
-        bot.reply_to(message, f"This key already exists ❌")
-        return
-
-    # Add to keys list & save
-    VALID_KEYS.append(new_key)
-    with open("keys.txt", "a") as f:
-        f.write(f"{new_key}\n")
-
-    bot.reply_to(message, f"✅ New key created: {new_key}")
-
 # --- Main chat handler ---
 @bot.message_handler(func=lambda message: True)
 def chat_with_ai(message):
@@ -372,5 +325,3 @@ bot.set_webhook(url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/")
 if __name__ == "__main__":
     print("💋 Taara is online — key-protected + admin mode 💫")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
-
