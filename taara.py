@@ -8,7 +8,7 @@ from io import BytesIO
 from flask import Flask, request
 
 # --- CONFIG (change these) ---
-ADMIN_IDS = {123456789}  # <-- Replace with your Telegram numeric ID(s)
+ADMIN_IDS = {5084575526}  # <-- Replace with your Telegram numeric ID(s)
 CREATOR_NAME = "VaaYU"   # <-- How bot should call the creator/admin in greeting
 
 # --- Tokens from environment ---
@@ -365,3 +365,4 @@ bot.set_webhook(url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/")  #
 if __name__ == "__main__":
     print("💋 Taara is online — key-protected + admin mode 💫")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
