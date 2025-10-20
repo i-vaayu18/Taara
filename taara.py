@@ -166,7 +166,7 @@ def check_authorized(func):
 def cmd_start(message):
     chat_id = message.chat.id
     if chat_id in ADMIN_IDS:
-        bot.reply_to(message, f"Hi {CREATOR_NAME} ❤️ — I remember you! How can I help today?")
+        bot.reply_to(message, f"Hi {CREATOR_NAME} ❤️ —  How can I help today?")
         return
     if chat_id in AUTHORIZED_USERS:
         bot.reply_to(message, "Hi Babe 😘 — you are already registered. Just chat with me!")
@@ -348,3 +348,4 @@ bot.set_webhook(url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/")
 if __name__ == "__main__":
     print("💋 Taara is online — key-protected + admin mode 💫")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
