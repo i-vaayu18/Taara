@@ -271,10 +271,14 @@ def chat_with_ai(message):
             pass
 
 # --- Set webhook (Railway) ---
-bot.remove_webhook()
-bot.set_webhook(url=f"https://{PUBLIC_DOMAIN}/")
+if PUBLIC_DOMAIN:
+    bot.remove_webhook()
+    bot.set_webhook(url=f"https://{PUBLIC_DOMAIN}/")
+else:
+    print("⚠️ PUBLIC DOMAIN not ready, webhook skipped")
 
 # --- Run Flask server ---
 if __name__ == "__main__":
     print("💋 Taara is online — key-protected + admin mode 💫")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
