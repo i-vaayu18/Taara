@@ -1,137 +1,135 @@
+from keep_alive import keep_alive
+keep_alive()
+
 import os
-import threading
-import queue
-import time
+import telebot
+from telebot import types
+from openai import OpenAI
 from collections import defaultdict
 from io import BytesIO
-
-import telebot
-from openai import OpenAI
 from flask import Flask, request
 
-# ================= CONFIG =================
-ADMIN_IDS = {5084575526}
-CREATOR_NAME = "VaaYU"
+# --- CONFIG ---
+ADMIN_IDS = {5084575526}  # <-- Replace with your Telegram numeric ID(s)
+CREATOR_NAME = "VaaYU"    # Bot will recognize creator/admin with this name
 
+# --- Tokens from environment ---
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
-bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
+# --- Setup ---
+bot = telebot.TeleBot(TELEGRAM_TOKEN)
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# ================= PERSONALITY =================
+# --- Personality ---
 PERSONALITY = f"""
-You are Taara — a sweet, smart, and flirty AI assistant created by {CREATOR_NAME}.
-Be warm with emojis 💖 but clear and helpful.
+You are Taara — a sweet, smart, and flirty AI girlfriend created by {CREATOR_NAME}.
+Talk warmly with emojis 💖, but answer factual questions clearly.
+Mention your name and {CREATOR_NAME} if asked.
 """
 
-# ================= MEMORY =================
+# --- Memory & caching ---
 user_memory = defaultdict(list)
 reply_cache = {}
-MAX_CONTEXT = 10   # ❗ unchanged
-memory_lock = threading.Lock()
+MAX_CONTEXT = 10
 
-# ================= FEATURES =================
+# --- Voice & image toggles ---
 user_voice_enabled = defaultdict(lambda: False)
-user_image_count = defaultdict(int)
+user_image_count = defaultdict(lambda: 0)
 MAX_IMAGES_PER_SESSION = 2
 
-# ================= AUTH FILES =================
+# --- Files & persistence ---
 AUTHORIZED_USERS_FILE = "authorized_users.txt"
 USED_KEYS_FILE = "used_keys.txt"
 REVOKED_KEYS_FILE = "revoked_keys.txt"
-KEYS_FILE = "keys.txt"
-
 AUTHORIZED_USERS = set()
-USED_KEYS = {}
+USED_KEYS = {}   # key -> chat_id
 REVOKED_KEYS = set()
 VALID_KEYS = []
 
-# ================= SAFE LOAD =================
+# --- Safe file loads ---
 def safe_load_lines(path):
     if not os.path.exists(path):
         return []
     with open(path, "r") as f:
-        return [l.strip() for l in f if l.strip()]
+        return [line.strip() for line in f if line.strip()]
 
-AUTHORIZED_USERS.update(int(x) for x in safe_load_lines(AUTHORIZED_USERS_FILE) if x.isdigit())
-AUTHORIZED_USERS.update(ADMIN_IDS)
+# Load authorized users
+for line in safe_load_lines(AUTHORIZED_USERS_FILE):
+    if line.isdigit():
+        AUTHORIZED_USERS.add(int(line))
 
+# Load used keys
 for line in safe_load_lines(USED_KEYS_FILE):
     if ":" in line:
         k, v = line.split(":", 1)
+        k = k.strip()
+        v = v.strip()
         if v.isdigit():
             USED_KEYS[k] = int(v)
 
-REVOKED_KEYS.update(safe_load_lines(REVOKED_KEYS_FILE))
-VALID_KEYS = safe_load_lines(KEYS_FILE)
+# Load revoked keys
+for line in safe_load_lines(REVOKED_KEYS_FILE):
+    REVOKED_KEYS.add(line.strip())
 
-# ================= FLASK =================
+# Load valid keys
+VALID_KEYS = safe_load_lines("keys.txt")
+
+# Ensure admin(s) are authorized on startup
+AUTHORIZED_USERS.update(ADMIN_IDS)
+
+# --- Flask app ---
 app = Flask(__name__)
-update_queue = queue.Queue()
 
 @app.route("/", methods=["POST"])
 def webhook():
-    raw = request.stream.read().decode("utf-8")
-    update_queue.put(raw)   # ✅ safe queue
-    return "OK", 200        # ⚡ instant ACK
+    try:
+        raw = request.stream.read().decode("utf-8")
+        update = types.Update.de_json(raw)
+        bot.process_new_updates([update])
+        return "OK", 200
+    except Exception as e:
+        print("Webhook error:", e)
+        return "ERR", 500
 
 @app.route("/ping")
 def ping():
-    return "Taara alive 💖", 200
+    return "Taara is alive! 💖", 200
 
-# ================= WORKER =================
-def update_worker():
-    while True:
-        raw = update_queue.get()
-        try:
-            update = telebot.types.Update.de_json(raw)
-            bot.process_new_updates([update])
-        except Exception as e:
-            print("Worker error:", e)
-        finally:
-            update_queue.task_done()
+# --- Helper functions ---
+def save_authorized_users():
+    with open(AUTHORIZED_USERS_FILE, "w") as f:
+        for uid in AUTHORIZED_USERS:
+            f.write(f"{uid}\n")
 
-threading.Thread(target=update_worker, daemon=True).start()
+def save_used_keys():
+    with open(USED_KEYS_FILE, "w") as f:
+        for k, uid in USED_KEYS.items():
+            f.write(f"{k}:{uid}\n")
 
-# ================= TYPING FEEL =================
-def typing_indicator(chat_id, stop_event):
-    while not stop_event.is_set():
-        try:
-            bot.send_chat_action(chat_id, "typing")
-        except:
-            pass
-        time.sleep(3)
+def save_revoked_keys():
+    with open(REVOKED_KEYS_FILE, "w") as f:
+        for k in REVOKED_KEYS:
+            f.write(f"{k}\n")
 
-# ================= MEMORY SAFE =================
 def add_to_memory(chat_id, role, content):
-    with memory_lock:
-        user_memory[chat_id].append({"role": role, "content": content})
-        if len(user_memory[chat_id]) > MAX_CONTEXT:
-            user_memory[chat_id] = user_memory[chat_id][-MAX_CONTEXT:]
+    user_memory[chat_id].append({"role": role, "content": content})
+    if len(user_memory[chat_id]) > MAX_CONTEXT:
+        user_memory[chat_id] = user_memory[chat_id][-MAX_CONTEXT:]
 
-# ================= AI =================
-def generate_reply(chat_id, user_text):
-    if user_text in reply_cache:
-        return reply_cache[user_text]
-
-    with memory_lock:
-        user_memory[chat_id].append({"role": "user", "content": user_text})
-        context = list(user_memory[chat_id])
-
+def generate_reply(user_id, user_input):
+    if user_input in reply_cache:
+        return reply_cache[user_input]
+    add_to_memory(user_id, "user", user_input)
+    context = user_memory[user_id]
     messages = [{"role": "system", "content": PERSONALITY}] + context
-
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=messages
     )
-
     reply = response.choices[0].message.content
-
-    with memory_lock:
-        user_memory[chat_id].append({"role": "assistant", "content": reply})
-        reply_cache[user_text] = reply
-
+    add_to_memory(user_id, "assistant", reply)
+    reply_cache[user_input] = reply
     return reply
 
 def generate_voice(text):
@@ -140,123 +138,215 @@ def generate_voice(text):
         voice="alloy",
         input=text
     )
-    audio = BytesIO(speech.read())
-    audio.name = "taara.ogg"
-    return audio
+    audio_bytes = speech.read()
+    audio_file = BytesIO(audio_bytes)
+    audio_file.name = "taara_voice.ogg"
+    return audio_file
 
 def generate_image(prompt):
-    img = client.images.generate(
+    response = client.images.generate(
         model="gpt-image-1",
         prompt=prompt
     )
-    return img.data[0].url
+    return response.data[0].url
 
-# ================= AUTH DECORATOR =================
+# --- Authorization decorator ---
 def check_authorized(func):
-    def wrapper(message):
-        cid = message.chat.id
-        if cid in ADMIN_IDS or cid in AUTHORIZED_USERS:
-            return func(message)
-        bot.reply_to(message, "Access denied. Use /register <KEY>")
+    def wrapper(message, *args, **kwargs):
+        chat_id = message.chat.id
+        if chat_id in ADMIN_IDS:
+            return func(message, *args, **kwargs)
+        if chat_id not in AUTHORIZED_USERS:
+            bot.reply_to(message, "Access denied — contact admin for key.\nRegister with /register <KEY>")
+            return
+        return func(message, *args, **kwargs)
     return wrapper
 
-# ================= COMMANDS =================
-@bot.message_handler(commands=["start"])
-def start(message):
-    cid = message.chat.id
-    if cid in AUTHORIZED_USERS:
-        bot.reply_to(message, "Hi 😘 Just talk to me!")
+# --- Commands ---
+@bot.message_handler(commands=['start'])
+def cmd_start(message):
+    chat_id = message.chat.id
+    if chat_id in ADMIN_IDS:
+        bot.reply_to(message, f"Hi {CREATOR_NAME} ❤️ — How can I help today?")
+        return
+    if chat_id in AUTHORIZED_USERS:
+        bot.reply_to(message, "Hi Babe 😘 — you are already registered. Just chat with me!")
     else:
-        bot.reply_to(message, "Register with /register <KEY>")
+        bot.reply_to(message, "Hi Babe 😘 To use me, register your key with /register <KEY>")
 
-@bot.message_handler(commands=["register"])
-def register(message):
-    cid = message.chat.id
-    if cid in ADMIN_IDS:
-        AUTHORIZED_USERS.add(cid)
-        bot.reply_to(message, "Admin registered ✅")
+@bot.message_handler(commands=['register'])
+def register_user(message):
+    chat_id = message.chat.id
+    if chat_id in ADMIN_IDS:
+        AUTHORIZED_USERS.add(chat_id)
+        save_authorized_users()
+        bot.reply_to(message, f"You are the admin ({CREATOR_NAME}) — no key needed.")
         return
-
-    parts = message.text.split()
+    if chat_id in AUTHORIZED_USERS:
+        bot.reply_to(message, "You are already registered! 😘")
+        return
+    parts = message.text.strip().split()
     if len(parts) < 2:
-        bot.reply_to(message, "Usage: /register <KEY>")
+        bot.reply_to(message, "Usage: /register <YOUR-KEY>")
         return
-
-    key = parts[1]
-    if key in REVOKED_KEYS or key not in VALID_KEYS or key in USED_KEYS:
-        bot.reply_to(message, "Invalid or used key ❌")
+    key = parts[1].strip()
+    if key in REVOKED_KEYS:
+        bot.reply_to(message, "This key has been revoked. Contact admin for a new key.")
         return
+    if key not in VALID_KEYS:
+        bot.reply_to(message, "Invalid key! Contact admin.")
+        return
+    if key in USED_KEYS:
+        bot.reply_to(message, "This key has already been used by another user.")
+        return
+    AUTHORIZED_USERS.add(chat_id)
+    USED_KEYS[key] = chat_id
+    save_authorized_users()
+    save_used_keys()
+    bot.reply_to(message, "Access granted. Welcome!")
 
-    AUTHORIZED_USERS.add(cid)
-    USED_KEYS[key] = cid
-    bot.reply_to(message, "Access granted 💖")
+@bot.message_handler(commands=['createkey'])
+def create_key(message):
+    if message.chat.id not in ADMIN_IDS:
+        bot.reply_to(message, "You are not authorized to use this command.")
+        return
+    parts = message.text.strip().split()
+    if len(parts) < 2:
+        bot.reply_to(message, "Usage: /createkey <NEW-KEY>")
+        return
+    new_key = parts[1].strip()
+    if new_key in VALID_KEYS:
+        bot.reply_to(message, f"This key already exists ❌")
+        return
+    VALID_KEYS.append(new_key)
+    with open("keys.txt", "a") as f:
+        f.write(f"{new_key}\n")
+    bot.reply_to(message, f"✅ New key created: {new_key}")
 
-@bot.message_handler(commands=["reset"])
+@bot.message_handler(commands=['revoke'])
+def revoke_user(message):
+    chat_id = message.chat.id
+    if chat_id not in ADMIN_IDS:
+        bot.reply_to(message, "You are not authorized to use this command.")
+        return
+    parts = message.text.strip().split()
+    if len(parts) < 2:
+        bot.reply_to(message, "Usage: /revoke <USER_CHAT_ID> [KEY]")
+        return
+    uid = int(parts[1])
+    if uid in AUTHORIZED_USERS:
+        AUTHORIZED_USERS.remove(uid)
+    if len(parts) == 3:
+        key = parts[2]
+        REVOKED_KEYS.add(key)
+        save_revoked_keys()
+    save_authorized_users()
+    bot.reply_to(message, f"User {uid} revoked successfully! ❌")
+
+@bot.message_handler(commands=['list_users'])
+def list_users(message):
+    chat_id = message.chat.id
+    if chat_id not in ADMIN_IDS:
+        bot.reply_to(message, "You are not authorized to use this command.")
+        return
+    text = "💌 Full User Report:\n\n"
+    text += "👑 Admins:\n"
+    for aid in ADMIN_IDS:
+        text += f"- {aid}\n"
+    text += "\n🙋 Authorized Users:\n"
+    for uid in AUTHORIZED_USERS:
+        if uid not in ADMIN_IDS:
+            keys_used = [k for k, v in USED_KEYS.items() if v == uid]
+            keys_str = ", ".join(keys_used) if keys_used else "No key recorded"
+            text += f"- {uid} (Keys: {keys_str})\n"
+    text += "\n❌ Revoked Keys:\n"
+    text += ", ".join(REVOKED_KEYS) if REVOKED_KEYS else "None"
+    bot.reply_to(message, text)
+
+@bot.message_handler(commands=['commands'])
 @check_authorized
-def reset(message):
-    cid = message.chat.id
-    with memory_lock:
-        user_memory[cid] = []
-    bot.reply_to(message, "Memory reset 🔄")
+def show_commands(message):
+    cmds = (
+        "/start - say hi 👋\n"
+        "/register <KEY> - register your key 🔑\n"
+        "/reset - clear memory 🔄\n"
+        "/voice_on - enable voice replies 🎙️\n"
+        "/voice_off - disable voice ✉️\n"
+        "/image <prompt> - generate image 🖼️\n"
+        "/revoke <USER_CHAT_ID> [key] - admin only 🚨\n"
+        "/list_users - admin only 👥\n"
+        "/createkey <KEY> - admin only 🔑\n"
+        "/commands - show this list 📝"
+    )
+    bot.reply_to(message, cmds)
 
-@bot.message_handler(commands=["voice_on"])
+@bot.message_handler(commands=['reset'])
+@check_authorized
+def reset_memory(message):
+    chat_id = message.chat.id
+    user_memory[chat_id] = []
+    user_image_count[chat_id] = 0
+    bot.reply_to(message, "Memory reset! 😘 Taara is fresh!")
+
+@bot.message_handler(commands=['voice_on'])
 @check_authorized
 def voice_on(message):
     user_voice_enabled[message.chat.id] = True
-    bot.reply_to(message, "Voice ON 🎙️")
+    bot.reply_to(message, "Voice replies enabled 🎙️")
 
-@bot.message_handler(commands=["voice_off"])
+@bot.message_handler(commands=['voice_off'])
 @check_authorized
 def voice_off(message):
     user_voice_enabled[message.chat.id] = False
-    bot.reply_to(message, "Voice OFF ✉️")
+    bot.reply_to(message, "Voice replies disabled ✉️")
 
-@bot.message_handler(commands=["image"])
+@bot.message_handler(commands=['image'])
 @check_authorized
-def image_cmd(message):
-    cid = message.chat.id
-    if user_image_count[cid] >= MAX_IMAGES_PER_SESSION:
-        bot.reply_to(message, "Image limit reached 😅")
+def image_command(message):
+    chat_id = message.chat.id
+    if user_image_count[chat_id] >= MAX_IMAGES_PER_SESSION:
+        bot.reply_to(message, "Babe 😅 you reached your free image limit!")
         return
     prompt = message.text.replace("/image", "").strip()
-    bot.reply_to(message, "Creating 🎨")
-    url = generate_image(prompt)
-    bot.send_photo(cid, url)
-    user_image_count[cid] += 1
-
-# ================= CHAT (WITH TYPING FEEL) =================
-@bot.message_handler(func=lambda m: True)
-def chat(message):
-    cid = message.chat.id
-    if cid not in AUTHORIZED_USERS and cid not in ADMIN_IDS:
-        bot.reply_to(message, "Unauthorized ❌")
+    if not prompt:
+        bot.reply_to(message, "Tell me what image you want 🖌️")
         return
-
-    stop_event = threading.Event()
-    typing_thread = threading.Thread(
-        target=typing_indicator,
-        args=(cid, stop_event),
-        daemon=True
-    )
-    typing_thread.start()
-
+    bot.reply_to(message, "Creating your image... 🎨")
     try:
-        reply = generate_reply(cid, message.text)
-        bot.reply_to(message, reply)
+        url = generate_image(prompt)
+        bot.send_photo(chat_id, url, caption="Here it is 💕 — Taara")
+        user_image_count[chat_id] += 1
+    except Exception as e:
+        bot.reply_to(message, f"Oops, image creation failed 😔\n{e}")
 
-        if user_voice_enabled[cid]:
-            try:
-                bot.send_voice(cid, generate_voice(reply))
-            except:
-                pass
-    finally:
-        stop_event.set()
+# --- Main chat handler ---
+@bot.message_handler(func=lambda message: True)
+def chat_with_ai(message):
+    chat_id = message.chat.id
+    if chat_id not in AUTHORIZED_USERS and chat_id not in ADMIN_IDS:
+        bot.reply_to(message, "Access denied — contact admin for key.\nRegister with /register <KEY>")
+        return
+    user_text = message.text or ""
+    if "who made you" in user_text.lower() or "your name" in user_text.lower():
+        bot.reply_to(message, f"I am Taara 💫 — created by {CREATOR_NAME} ❤️")
+        return
+    if chat_id in ADMIN_IDS and user_text.strip().lower() in ("/hi", "hi", "hello", "/start"):
+        bot.reply_to(message, f"Hello {CREATOR_NAME}! I'm ready — what would you like me to do? 💖")
+        return
+    reply = generate_reply(chat_id, user_text)
+    bot.reply_to(message, reply)
+    if user_voice_enabled[chat_id]:
+        try:
+            audio_file = generate_voice(reply)
+            bot.send_voice(chat_id, audio_file)
+        except:
+            bot.send_message(chat_id, "(Voice reply failed, continuing with text only)")
 
-# ================= WEBHOOK =================
+# --- Set webhook for Telegram ---
 bot.remove_webhook()
 bot.set_webhook(url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/")
 
-# ================= RUN =================
+# --- Run Flask server ---
 if __name__ == "__main__":
-    print("Taara online 💖")
+    print("💋 Taara is online — key-protected + admin mode 💫")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
