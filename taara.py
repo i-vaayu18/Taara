@@ -208,7 +208,7 @@ def chat(message):
         bot.reply_to(message, "Access denied ❌")
         return
 
-    typing(cid, 1.5)
+    typing(cid, 0.2)
     reply = generate_reply(cid, message.text)
     bot.reply_to(message, reply)
 
@@ -223,3 +223,4 @@ else:
 if __name__ == "__main__":
     print("💋 Taara is online — key-protected + admin mode 💫")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+
