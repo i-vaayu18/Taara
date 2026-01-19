@@ -85,10 +85,6 @@ def ping():
     return "Taara is alive 💖", 200
 
 # ---------------- HELPERS ----------------
-def typing(chat_id, t=1.2):
-    bot.send_chat_action(chat_id, "typing")
-    time.sleep(t)
-
 def save_file(path, lines):
     with open(path, "w") as f:
         for l in lines:
@@ -128,7 +124,6 @@ def check_auth(func):
 @bot.message_handler(commands=["start"])
 def start(message):
     cid = message.chat.id
-    typing(cid)
     if cid in ADMIN_IDS:
         bot.reply_to(message, f"Hi {CREATOR_NAME} ❤️")
     elif cid in AUTHORIZED_USERS:
@@ -208,7 +203,6 @@ def chat(message):
         bot.reply_to(message, "Access denied ❌")
         return
 
-    typing(cid, 0.2)
     reply = generate_reply(cid, message.text)
     bot.reply_to(message, reply)
 
@@ -223,4 +217,3 @@ else:
 if __name__ == "__main__":
     print("💋 Taara is online — key-protected + admin mode 💫")
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
